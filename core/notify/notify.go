@@ -54,16 +54,10 @@ func (h *Handler) ParseNotifyRequest(ctx context.Context, request *http.Request,
 }
 
 func getRequestBody(request *http.Request) ([]byte, error) {
-	reqBody, err := request.GetBody()
-	if err != nil {
-		return nil, fmt.Errorf("get request body err: %v", err)
-	}
-
-	body, err := ioutil.ReadAll(reqBody)
+	body, err := ioutil.ReadAll(request.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read request body err: %v", err)
 	}
-
 	return body, nil
 }
 
