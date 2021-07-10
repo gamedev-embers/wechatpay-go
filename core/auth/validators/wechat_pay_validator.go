@@ -22,64 +22,66 @@ func (v *wechatPayValidator) validateHTTPMessage(ctx context.Context, header htt
 		return fmt.Errorf("you must init Validator with auth.Verifier")
 	}
 
-	if err := checkParameters(ctx, header, body); err != nil {
+	args, err := newWechatpayHeaders(header)
+	if err != nil {
 		return err
 	}
 
-	message := buildMessage(ctx, header, body)
-
-	serialNumber := header.Get(consts.WechatPaySerial)
-	signature := header.Get(consts.WechatPaySignature)
-	if err := v.verifier.Verify(ctx, serialNumber, message, signature); err != nil {
-		return fmt.Errorf(
-			"validate verify fail serial=%s request-id=%s err=%s",
-			serialNumber, header.Get(consts.RequestID), err,
-		)
+	message := args.buildMessage(ctx, header, body)
+	if err := v.verifier.Verify(ctx, args.SerialNo, message, args.Signature); err != nil {
+		return fmt.Errorf("validate verify fail serialNo=%s err=%v", args.SerialNo, err)
 	}
 	return nil
 }
 
-func checkParameters(ctx context.Context, header http.Header, body []byte) error {
-	// Suppressing warnings
-	_ = ctx
-	_ = body
+// 微信支付回调信息上下文
+type wechatPayHeaders struct {
+	SerialNo  string
+	Signature string
+	Nonce     string
+	Timestamp int64
+}
 
-	requestID := strings.TrimSpace(header.Get(consts.RequestID))
-	if requestID == "" {
-		return fmt.Errorf("empty %s", consts.RequestID)
+func newWechatpayHeaders(headers http.Header) (rs wechatPayHeaders, err error) {
+	getHeader := func(name string) (string, error) {
+		v := strings.TrimSpace(headers.Get(name))
+		if v == "" {
+			return v, fmt.Errorf("empty '%s'", name)
+		}
+		return v, nil
+	}
+	getHeaderInt64 := func(name string) (int64, error) {
+		v, err := getHeader(name)
+		if err != nil {
+			return 0, err
+		}
+		return strconv.ParseInt(v, 10, 64)
 	}
 
-	if strings.TrimSpace(header.Get(consts.WechatPaySerial)) == "" {
-		return fmt.Errorf("empty %s, request-id=[%s]", consts.WechatPaySerial, requestID)
-	}
-
-	if strings.TrimSpace(header.Get(consts.WechatPaySignature)) == "" {
-		return fmt.Errorf("empty %s, request-id=[%s]", consts.WechatPaySignature, requestID)
-	}
-
-	if strings.TrimSpace(header.Get(consts.WechatPayTimestamp)) == "" {
-		return fmt.Errorf("empty %s, request-id=[%s]", consts.WechatPayTimestamp, requestID)
-	}
-
-	if strings.TrimSpace(header.Get(consts.WechatPayNonce)) == "" {
-		return fmt.Errorf("empty %s, request-id=[%s]", consts.WechatPayNonce, requestID)
-	}
-
-	timeStampStr := strings.TrimSpace(header.Get(consts.WechatPayTimestamp))
-	timeStamp, err := strconv.Atoi(timeStampStr)
+	rs.SerialNo, err = getHeader(consts.WechatPaySerial)
 	if err != nil {
-		return fmt.Errorf("invalid timestamp:[%s] request-id=[%s] err:[%v]", timeStampStr, requestID, err)
+		return
+	}
+	rs.Signature, err = getHeader(consts.WechatPaySignature)
+	if err != nil {
+		return
+	}
+	rs.Nonce, err = getHeader(consts.WechatPayNonce)
+	if err != nil {
+		return
+	}
+	rs.Timestamp, err = getHeaderInt64(consts.WechatPayTimestamp)
+	if err != nil {
+		return
 	}
 
-	if math.Abs(float64(timeStamp)-float64(time.Now().Unix())) >= consts.FiveMinute {
-		return fmt.Errorf("timestamp=[%d] expires, request-id=[%s]", timeStamp, requestID)
+	now := time.Now()
+	if math.Abs(float64(rs.Timestamp-now.Unix())) >= consts.FiveMinute {
+		err = fmt.Errorf("notify expired. timestamp=[%d]", rs.Timestamp)
 	}
-	return nil
+	return
 }
 
-func buildMessage(ctx context.Context, header http.Header, body []byte) string {
-	timeStamp := header.Get(consts.WechatPayTimestamp)
-	nonce := header.Get(consts.WechatPayNonce)
-
-	return fmt.Sprintf("%s\n%s\n%s\n", timeStamp, nonce, string(body))
+func (h *wechatPayHeaders) buildMessage(ctx context.Context, header http.Header, body []byte) string {
+	return fmt.Sprintf("%d\n%s\n%s\n", h.Timestamp, h.Nonce, string(body))
 }
