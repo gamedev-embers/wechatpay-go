@@ -58,6 +58,7 @@ func getRequestBody(request *http.Request) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read request body err: %v", err)
 	}
+	_ = request.Body.Close()
 	return body, nil
 }
 

@@ -33,12 +33,12 @@ func Test_getRequestBody(t *testing.T) {
 	// Read Two times
 	bodyBytes, err = getRequestBody(req)
 	require.NoError(t, err)
-	assert.Equal(t, body, string(bodyBytes))
+	assert.Equalf(t, []byte{}, bodyBytes, "it can only read once")
 
 	// Read Three times
 	bodyBytes, err = getRequestBody(req)
 	require.NoError(t, err)
-	assert.Equal(t, body, string(bodyBytes))
+	assert.Equalf(t, []byte{}, bodyBytes, "it can only read once")
 }
 
 type contentType struct {

@@ -3,10 +3,12 @@ package validators
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,24 +20,42 @@ import (
 type mockVerifier struct {
 }
 
+func (v *mockVerifier) pack(s string) string {
+	return hex.EncodeToString([]byte(s))
+}
+
+func (v *mockVerifier) unpack(s string) string {
+	rs, err := hex.DecodeString(s)
+	if err != nil {
+		panic(fmt.Errorf("%w s=%s", err, s))
+	}
+	return string(rs)
+}
+
 func (v *mockVerifier) Verify(ctx context.Context, serialNumber string, message string, signature string) error {
-	if serialNumber+"-"+message == signature {
+	signature = v.unpack(signature)
+	signActual := serialNumber + "-" + message
+	if signActual == signature {
 		return nil
 	}
-
-	return fmt.Errorf("verification failed")
+	dump := func(s string) string {
+		return "\"" + strings.Replace(s, "\n", "\\n", -1) + "\""
+	}
+	return fmt.Errorf("verification failed: sign(actual=%s expected=%s", dump(signActual), dump(signature))
 }
 
 func TestWechatPayResponseValidator_Validate(t *testing.T) {
 	mockTimestamp := time.Now().Unix()
 	mockTimestampStr := fmt.Sprintf("%d", mockTimestamp)
 
-	validator := NewWechatPayResponseValidator(&mockVerifier{})
+	verifier := &mockVerifier{}
+	validator := NewWechatPayResponseValidator(verifier)
 
 	type args struct {
 		ctx      context.Context
 		response *http.Response
 	}
+
 	tests := []struct {
 		name    string
 		args    args
@@ -112,6 +132,10 @@ func TestWechatPayResponseValidator_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
+				// 保证 sign 参数中的 "\n" 字符不被 trim 掉（正常情况下不应该有这个字符）
+				if sign := tt.args.response.Header.Get(consts.WechatPaySignature); sign != "" {
+					tt.args.response.Header.Set(consts.WechatPaySignature, verifier.pack(sign))
+				}
 				if err := validator.Validate(tt.args.ctx, tt.args.response); (err != nil) != tt.wantErr {
 					t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 				}
@@ -120,10 +144,11 @@ func TestWechatPayResponseValidator_Validate(t *testing.T) {
 	}
 }
 
-func Test_checkParameters(t *testing.T) {
+func Test_WechatPayNotifyValidator_Validate(t *testing.T) {
 	type args struct {
 		response *http.Response
 	}
+	timestampStr := strconv.FormatInt(time.Now().Unix(), 10)
 	tests := []struct {
 		name    string
 		args    args
@@ -136,8 +161,8 @@ func Test_checkParameters(t *testing.T) {
 					Header: map[string][]string{
 						consts.RequestID:          {"1"},
 						consts.WechatPaySerial:    {"1"},
-						consts.WechatPaySignature: {"1"},
-						consts.WechatPayTimestamp: {strconv.FormatInt(time.Now().Unix(), 10)},
+						consts.WechatPaySignature: {fmt.Sprintf("1-%s\n1\n\n", timestampStr)},
+						consts.WechatPayTimestamp: {timestampStr},
 						consts.WechatPayNonce:     {"1"},
 					},
 				},
@@ -221,6 +246,8 @@ func Test_checkParameters(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
+	verifier := &mockVerifier{}
+	validator := NewWechatPayNotifyValidator(verifier)
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
@@ -233,7 +260,12 @@ func Test_checkParameters(t *testing.T) {
 					require.NoError(t, err)
 				}
 
-				if err := checkParameters(ctx, tt.args.response.Header, body); (err != nil) != tt.wantErr {
+				// 保证 sign 参数中的 "\n" 字符不被 trim 掉（正常情况下不应该有这个字符）
+				if sign := tt.args.response.Header.Get(consts.WechatPaySignature); sign != "" {
+					tt.args.response.Header.Set(consts.WechatPaySignature, verifier.pack(sign))
+				}
+
+				if err := validator.Validate(ctx, tt.args.response.Header, body); (err != nil) != tt.wantErr {
 					t.Errorf("validateParameters() error = %v, wantErr %v", err, tt.wantErr)
 				}
 			},
