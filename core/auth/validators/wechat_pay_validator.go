@@ -18,18 +18,19 @@ type wechatPayValidator struct {
 }
 
 func (v *wechatPayValidator) validateHTTPMessage(ctx context.Context, header http.Header, body []byte) error {
+	requestId := header.Get(consts.RequestID)
 	if v.verifier == nil {
-		return fmt.Errorf("you must init Validator with auth.Verifier")
+		return fmt.Errorf("you must init Validator with auth.Verifier. request-id=[%s]", requestId)
 	}
 
 	args, err := newWechatpayHeaders(header)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w request-id=[%s]", err, requestId)
 	}
 
 	message := args.buildMessage(ctx, header, body)
 	if err := v.verifier.Verify(ctx, args.SerialNo, message, args.Signature); err != nil {
-		return fmt.Errorf("validate verify fail serialNo=%s err=%v", args.SerialNo, err)
+		return fmt.Errorf("validate verify fail serialNo=%s request-id=[%s] err=%v", args.SerialNo, requestId, err)
 	}
 	return nil
 }
